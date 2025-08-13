@@ -222,13 +222,11 @@
       const texture = new THREE.VideoTexture(videoElement);
       texture.colorSpace = THREE.SRGBColorSpace;
       texture.flipY = false;
-      
-      // Optimize texture settings for better quality
+      // Use RGBA so alpha videos render correctly
+      texture.format = THREE.RGBAFormat;
       texture.minFilter = THREE.LinearFilter;
       texture.magFilter = THREE.LinearFilter;
-      texture.format = THREE.RGBFormat;
       texture.generateMipmaps = false;
-      
       return texture;
     }
 
@@ -249,7 +247,8 @@
       plane.position.set(AR_POSITION.x, AR_POSITION.y, AR_POSITION.z);
       plane.rotation.set(0, 0, 0);
       
-      dbg(`Optimized AR plane: ${displayWidth.toFixed(2)}x${displayHeight}m at ${AR_POSITION.z}m distance`);
+      // ✅ Fixed: proper template literal with backticks
+      dbg(`Optimized AR plane: ${displayWidth.toFixed(2)}x${displayHeight.toFixed(2)}m at ${AR_POSITION.z}m distance`);
     }
 
     // Initialize AR system with quality optimizations
@@ -266,7 +265,9 @@
         }
 
         // Setup high-quality WebGL renderer
+        const canvas = document.createElement('canvas');
         renderer = new THREE.WebGLRenderer({ 
+          canvas,
           antialias: true, 
           alpha: false, 
           powerPreference: 'high-performance',
@@ -274,7 +275,7 @@
         });
         
         renderer.setSize(window.innerWidth, window.innerHeight);
-        renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2)); // Limit pixel ratio for performance
+        renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
         renderer.domElement.classList.add('webgl');
         document.body.appendChild(renderer.domElement);
 
@@ -287,7 +288,7 @@
         // Setup camera with quality settings
         camera = new ZapparThree.Camera({ 
           userFacing: false,
-          rearCameraSource: 'best' // Request best quality rear camera
+          rearCameraSource: 'best'
         });
         scene = new THREE.Scene();
         scene.background = camera.backgroundTexture;
@@ -334,7 +335,6 @@
     // Enhanced video playback
     async function playVideoWithAudio(videoElement) {
       try {
-        // Ensure video is ready
         if (videoElement.readyState < 2) {
           await new Promise(resolve => {
             videoElement.addEventListener('canplay', resolve, { once: true });
@@ -385,6 +385,7 @@
 
         currentVideo = vIntro;
         plane.material.map = introTexture;
+        plane.material.needsUpdate = true;
 
         if (vIntro.readyState >= 1) {
           adjustPlaneToVideo(vIntro);
@@ -436,7 +437,6 @@
         menu.style.display = 'none';
         dbg('Starting exercise with fresh permission...');
 
-        // Re-request camera permission for exercise
         try {
           await requestCameraAccess();
         } catch (e) {
@@ -449,6 +449,7 @@
 
         currentVideo = vExercise;
         plane.material.map = exerciseTexture;
+        plane.material.needsUpdate = true;
 
         if (vExercise.readyState >= 1) {
           adjustPlaneToVideo(vExercise);
@@ -456,7 +457,6 @@
           vExercise.addEventListener('loadedmetadata', () => adjustPlaneToVideo(vExercise), { once: true });
         }
 
-        // Show countdown before exercise
         await showCountdown(3);
         
         vExercise.currentTime = 0;
@@ -479,6 +479,7 @@
 
         currentVideo = vIntro;
         plane.material.map = introTexture;
+        plane.material.needsUpdate = true;
 
         await showCountdown(2);
         
