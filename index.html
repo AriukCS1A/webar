@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,user-scalable=no">
-  <title>WebAR — Auto AR Experience</title>
+  <title>WebAR — Intro → Menu → Exercise</title>
 
   <style>
     :root { --z-ui:5; --z-menu:6; --z-debug:20 }
@@ -23,16 +23,9 @@
            padding:8px 12px;border-radius:8px;font:12px/1.4 monospace;white-space:pre-wrap;max-width:90vw;
            border:1px solid rgba(0,255,0,0.3)}
     
-    #loadingScreen{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;z-index:var(--z-ui);
-                   background:#000;flex-direction:column;gap:20px}
-    
-    .loading-spinner{width:50px;height:50px;border:4px solid rgba(255,255,255,0.3);border-top:4px solid #fff;
-                     border-radius:50%;animation:spin 1s linear infinite}
-    
-    @keyframes spin { 0%{transform:rotate(0deg)} 100%{transform:rotate(360deg)} }
-    
-    #permissionError{position:fixed;inset:0;display:none;align-items:center;justify-content:center;z-index:var(--z-ui);
-                     background:#000;flex-direction:column;gap:20px;text-align:center;padding:20px}
+    #instructions{position:fixed;bottom:20px;left:20px;right:20px;z-index:var(--z-ui);
+                  color:#fff;text-align:center;background:rgba(0,0,0,0.6);
+                  padding:12px;border-radius:12px;font-size:14px;display:none}
   </style>
 
   <!-- THREE + Zappar -->
@@ -54,18 +47,12 @@
 <body>
   <div id="debug">DEBUG: Initializing...</div>
 
-  <!-- Loading Screen -->
-  <div id="loadingScreen">
-    <div class="loading-spinner"></div>
-    <h2 style="color:#fff;margin:0;">Starting AR Experience...</h2>
-    <p style="color:#ccc;margin:0;">Please allow camera access when prompted</p>
-  </div>
-
-  <!-- Permission Error Screen -->
-  <div id="permissionError">
-    <h2 style="color:#fff;margin-bottom:20px;">Camera Access Required</h2>
-    <p style="color:#ccc;margin-bottom:30px;">This AR experience needs camera access to work properly.</p>
-    <button id="btnRetry" class="btn">Try Again</button>
+  <!-- UI Elements -->
+  <div id="startLayer">
+    <div style="text-align:center;">
+      <h1 style="color:#fff;margin-bottom:30px;font-size:24px;">WebAR Experience</h1>
+      <button id="btnStart" class="btn">▶ START EXPERIENCE</button>
+    </div>
   </div>
   
   <button id="btnUnmute" class="btn">🔊 Enable Audio</button>
@@ -78,6 +65,8 @@
     </div>
   </div>
 
+  <div id="instructions">Tap anywhere to place the AR content in your space</div>
+
   <!-- Hidden video elements -->
   <video id="vidIntro" playsinline preload="auto" style="display:none" crossorigin="anonymous"></video>
   <video id="vidExercise" playsinline preload="auto" loop style="display:none" crossorigin="anonymous"></video>
@@ -89,9 +78,6 @@
     const EXERCISE_WEBM_URL  = "https://batbaatar-anu.github.io/my-ar-host/dasgal.webm";
     const EXERCISE_MP4_URL   = "";
 
-    // Fixed AR content position (2 meters in front, at eye level)
-    const AR_POSITION = { x: 0, y: 0, z: -2 };
-
     // Debug logger
     const dbg = (message) => {
       console.log('DEBUG:', message);
@@ -99,13 +85,13 @@
     };
 
     // DOM elements
-    const vIntro = document.getElementById('vidIntro');
-    const vExercise = document.getElementById('vidExercise');
-    const loadingScreen = document.getElementById('loadingScreen');
-    const permissionError = document.getElementById('permissionError');
-    const btnRetry = document.getElementById('btnRetry');
-    const btnUnmute = document.getElementById('btnUnmute');
-    const menu = document.getElementById('menu');
+    const vIntro     = document.getElementById('vidIntro');
+    const vExercise  = document.getElementById('vidExercise');
+    const startLayer = document.getElementById('startLayer');
+    const btnStart   = document.getElementById('btnStart');
+    const btnUnmute  = document.getElementById('btnUnmute');
+    const menu       = document.getElementById('menu');
+    const instructions = document.getElementById('instructions');
 
     // Set video sources with proper codec support
     function setupVideoSources(videoElement, webmUrl, mp4Url = "") {
@@ -130,15 +116,16 @@
 
     /********** AR Engine **********/
     let THREE, ZapparThree, renderer, camera, scene, tracker, anchor, plane;
+    let hasPlacedContent = false;
     let introTexture, exerciseTexture, currentVideo;
-    let arInitialized = false;
 
     // Request camera permissions
     async function requestCameraAccess() {
       try {
         const permitted = await ZapparThree.permissionRequest();
         if (!permitted) {
-          throw new Error('Camera permission denied by user');
+          ZapparThree.permissionDeniedUI();
+          throw new Error('Camera permission denied');
         }
         camera?.start();
         dbg('Camera access granted and started');
@@ -157,22 +144,31 @@
       return texture;
     }
 
-    // Fit plane to video aspect ratio and position it at fixed location
+    // Fit plane to video aspect ratio and position it upright
     function adjustPlaneToVideo(videoElement) {
       const width = videoElement.videoWidth || 1280;
       const height = videoElement.videoHeight || 720;
-      const displayHeight = 1.2; // 1.2 meters tall for better visibility
+      const displayHeight = 0.9; // 0.9 meters tall
       const displayWidth = displayHeight * (width / height);
       
       // Update geometry
       plane.geometry.dispose();
       plane.geometry = new THREE.PlaneGeometry(displayWidth, displayHeight);
       
-      // Position at fixed location in front of user
-      plane.position.set(AR_POSITION.x, AR_POSITION.y, AR_POSITION.z);
-      plane.rotation.set(0, 0, 0); // Keep it straight
+      // Position so bottom edge touches ground (y=0)
+      plane.position.set(0, displayHeight / 2, 0);
       
-      dbg(`Video: ${width}x${height}, AR plane: ${displayWidth.toFixed(2)}x${displayHeight}m at fixed position`);
+      dbg(`Video dimensions: ${width}x${height}, AR plane: ${displayWidth.toFixed(2)}x${displayHeight}`);
+    }
+
+    // Make plane face camera (billboard effect) but keep it upright
+    const tempEuler = new THREE.Euler(0, 0, 0, 'YXZ');
+    function makePlaneUpright() {
+      // Extract only the yaw rotation from camera
+      tempEuler.setFromQuaternion(camera.quaternion, 'YXZ');
+      tempEuler.x = 0; // Remove pitch (keep upright)
+      tempEuler.z = 0; // Remove roll (keep upright)
+      plane.quaternion.setFromEuler(tempEuler);
     }
 
     // Initialize AR system
@@ -231,8 +227,13 @@
 
         // Start render loop
         renderer.setAnimationLoop(() => {
-          // Always set content at fixed position (no user placement required)
-          tracker.setAnchorPoseFromCameraOffset(AR_POSITION.x, AR_POSITION.y, AR_POSITION.z);
+          if (!hasPlacedContent) {
+            // Before placement, position content 2 meters in front
+            tracker.setAnchorPoseFromCameraOffset(0, 0, -2);
+          }
+          
+          // Keep plane upright and facing camera
+          makePlaneUpright();
           
           // Update and render
           camera.updateFrame(renderer);
@@ -248,7 +249,6 @@
           }
         });
 
-        arInitialized = true;
         dbg('AR system initialized successfully');
         
       } catch (error) {
@@ -278,24 +278,12 @@
       }
     }
 
-    // Show permission error screen
-    function showPermissionError() {
-      loadingScreen.style.display = 'none';
-      permissionError.style.display = 'flex';
-    }
-
-    // Hide all screens
-    function hideAllScreens() {
-      loadingScreen.style.display = 'none';
-      permissionError.style.display = 'none';
-    }
-
-    // Start AR experience automatically
-    async function startARExperience() {
+    // Start AR experience
+    btnStart.addEventListener('click', async () => {
       try {
-        dbg('Auto-starting AR experience...');
+        dbg('Starting AR experience...');
         
-        // Request camera access first
+        // Request camera access
         await requestCameraAccess();
 
         // Setup video sources
@@ -309,6 +297,7 @@
         // Start with intro video
         currentVideo = vIntro;
         plane.material.map = introTexture;
+        hasPlacedContent = false;
 
         // Setup video dimensions
         if (vIntro.readyState >= 1) {
@@ -317,32 +306,37 @@
           vIntro.addEventListener('loadedmetadata', () => adjustPlaneToVideo(vIntro), { once: true });
         }
 
-        // Hide loading screen and start playing
-        hideAllScreens();
-        
-        // Play intro video automatically
+        // Play intro video
         await playVideoWithAudio(vIntro);
+
+        // Setup placement handler
+        const handlePlacement = () => {
+          hasPlacedContent = true;
+          instructions.style.display = 'none';
+          window.removeEventListener('pointerdown', handlePlacement);
+          dbg('AR content placed in space');
+        };
         
-        dbg('Intro video playing automatically in AR');
+        window.addEventListener('pointerdown', handlePlacement, { once: true, passive: true });
+
+        // Show instructions and hide start screen
+        instructions.style.display = 'block';
+        startLayer.style.display = 'none';
+        
+        dbg('Intro video ready - tap to place in AR space');
 
         // Handle intro video end
         vIntro.onended = () => {
           menu.style.display = 'flex';
+          instructions.style.display = 'none';
           dbg('Intro completed - showing menu');
         };
 
       } catch (error) {
         console.error('Failed to start AR experience:', error);
         dbg('Failed to start: ' + error.message);
-        showPermissionError();
+        alert('Failed to start AR experience. Please ensure you have granted camera permissions and are using a supported browser.');
       }
-    }
-
-    // Retry button handler
-    btnRetry.addEventListener('click', async () => {
-      permissionError.style.display = 'none';
-      loadingScreen.style.display = 'flex';
-      await startARExperience();
     });
 
     // Enable audio button
@@ -365,6 +359,9 @@
         menu.style.display = 'none';
         dbg('Starting exercise...');
 
+        // Ensure camera is active
+        try { await requestCameraAccess(); } catch (e) { console.warn('Camera already active or failed to restart'); }
+
         // Stop current video
         if (currentVideo) {
           currentVideo.pause();
@@ -373,6 +370,7 @@
         // Switch to exercise video
         currentVideo = vExercise;
         plane.material.map = exerciseTexture;
+        hasPlacedContent = false;
 
         // Setup exercise video dimensions
         if (vExercise.readyState >= 1) {
@@ -381,11 +379,20 @@
           vExercise.addEventListener('loadedmetadata', () => adjustPlaneToVideo(vExercise), { once: true });
         }
 
-        // Play exercise video automatically
-        vExercise.currentTime = 0; // Restart from beginning
-        await playVideoWithAudio(vExercise);
+        // Setup placement and play handler
+        const startExercise = async () => {
+          hasPlacedContent = true;
+          vExercise.currentTime = 0; // Restart from beginning
+          await playVideoWithAudio(vExercise);
+          instructions.style.display = 'none';
+          window.removeEventListener('pointerdown', startExercise);
+          dbg('Exercise placed and playing');
+        };
+
+        window.addEventListener('pointerdown', startExercise, { once: true, passive: true });
+        instructions.style.display = 'block';
         
-        dbg('Exercise playing automatically in AR');
+        dbg('Exercise ready - tap to place and start');
 
       } catch (error) {
         console.error('Failed to start exercise:', error);
@@ -407,12 +414,24 @@
         // Switch back to intro
         currentVideo = vIntro;
         plane.material.map = introTexture;
+        hasPlacedContent = false;
 
-        // Reset and play intro automatically
+        // Reset and play intro
         vIntro.currentTime = 0;
         await playVideoWithAudio(vIntro);
 
-        dbg('Intro restarted and playing automatically');
+        // Setup placement handler
+        const handlePlacement = () => {
+          hasPlacedContent = true;
+          instructions.style.display = 'none';
+          window.removeEventListener('pointerdown', handlePlacement);
+          dbg('Intro content placed');
+        };
+        
+        window.addEventListener('pointerdown', handlePlacement, { once: true, passive: true });
+        instructions.style.display = 'block';
+
+        dbg('Intro restarted - tap to place');
 
       } catch (error) {
         console.error('Failed to restart intro:', error);
@@ -420,20 +439,10 @@
       }
     });
 
-    // Initialize everything when page loads
-    window.addEventListener('load', async () => {
-      try {
-        // Initialize AR system first
-        await initializeAR();
-        
-        // Then automatically start the experience
-        await startARExperience();
-        
-      } catch (error) {
-        console.error('Failed to initialize:', error);
-        dbg('Initialization failed - check console for details');
-        showPermissionError();
-      }
+    // Initialize AR system on page load
+    initializeAR().catch(error => {
+      console.error('Failed to initialize AR:', error);
+      dbg('Initialization failed - check console for details');
     });
   </script>
 </body>
