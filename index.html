@@ -178,7 +178,7 @@
       try {
         const permitted = await ZapparThree.permissionRequest();
         if (!permitted) throw new Error('Zappar permission denied');
-        camera?.start();
+        camera?.start(true);
         dbg('Camera access granted and started');
         return true;
       } catch (e) {
@@ -211,53 +211,59 @@
     }
 
     async function initializeAR() {
-      try {
-        ({ THREE, ZapparThree } = await window.__depsReady);
-        if (!THREE || !ZapparThree) throw new Error('Deps not loaded');
-        if (ZapparThree.browserIncompatible()) throw new Error('Browser incompatible');
+  try {
+    ({ THREE, ZapparThree } = await window.__depsReady);
+    if (!THREE || !ZapparThree) throw new Error('Deps not loaded');
+    if (ZapparThree.browserIncompatible()) throw new Error('Browser incompatible');
 
-        renderer = new THREE.WebGLRenderer({ antialias:true, alpha:false, powerPreference:'high-performance', precision:'highp' });
-        renderer.setSize(window.innerWidth, window.innerHeight);
-        renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-        renderer.domElement.classList.add('webgl');
-        document.body.appendChild(renderer.domElement);
+    renderer = new THREE.WebGLRenderer({ antialias:true, alpha:false, powerPreference:'high-performance', precision:'highp' });
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    renderer.domElement.classList.add('webgl');
+    document.body.appendChild(renderer.domElement);
 
-        window.addEventListener('resize', () => renderer.setSize(window.innerWidth, window.innerHeight));
-        ZapparThree.glContextSet(renderer.getContext());
+    window.addEventListener('resize', () => renderer.setSize(window.innerWidth, window.innerHeight));
+    ZapparThree.glContextSet(renderer.getContext());
 
-        camera = new ZapparThree.Camera({ userFacing:false, rearCameraSource:'best' });
-        scene = new THREE.Scene();
-        scene.background = camera.backgroundTexture;
+    // ⬇⬇⬇  ЭНЭ ХЭСЭГТ ЗАСВАР  ⬇⬇⬇
+    // Өмнөх { userFacing:false, rearCameraSource:'best' }-ийг авч хаяна
+    camera = new ZapparThree.Camera(); // сонголтгүйгээр үүсгэнэ
+    // (энд start хийхгүй — permission авч байхдаа start(true) дуудах болно)
+    // ⬆⬆⬆  ЗАСВАР ДУУСАВ  ⬆⬆⬆
 
-        tracker = new ZapparThree.InstantWorldTracker();
-        anchor = new ZapparThree.InstantWorldAnchorGroup(camera, tracker);
-        scene.add(anchor);
+    scene = new THREE.Scene();
+    scene.background = camera.backgroundTexture;
 
-        plane = new THREE.Mesh(
-          new THREE.PlaneGeometry(1, 1, 16, 16),
-          new THREE.MeshBasicMaterial({ transparent:true, side:THREE.DoubleSide, alphaTest:0.1 })
-        );
-        anchor.add(plane);
+    tracker = new ZapparThree.InstantWorldTracker();
+    anchor = new ZapparThree.InstantWorldAnchorGroup(camera, tracker);
+    scene.add(anchor);
 
-        renderer.setAnimationLoop(() => {
-          tracker.setAnchorPoseFromCameraOffset(AR_POSITION.x, AR_POSITION.y, AR_POSITION.z);
-          camera.updateFrame(renderer);
-          renderer.render(scene, camera);
-        });
+    plane = new THREE.Mesh(
+      new THREE.PlaneGeometry(1, 1, 16, 16),
+      new THREE.MeshBasicMaterial({ transparent:true, side:THREE.DoubleSide, alphaTest:0.1 })
+    );
+    anchor.add(plane);
 
-        document.addEventListener('visibilitychange', () => {
-          if (!document.hidden) { try { camera.start(); } catch(e){} }
-          else { try { camera.pause(); } catch(e){} }
-        });
+    renderer.setAnimationLoop(() => {
+      tracker.setAnchorPoseFromCameraOffset(AR_POSITION.x, AR_POSITION.y, AR_POSITION.z);
+      camera.updateFrame(renderer);
+      renderer.render(scene, camera);
+    });
 
-        arInitialized = true;
-        dbg('AR initialized');
-      } catch (e) {
-        console.error('AR initialization failed:', e);
-        dbg('Initialization failed - check console');
-        throw e;
-      }
-    }
+    // Дахин foreground болохдоо мөн rear-г шаардна
+    document.addEventListener('visibilitychange', () => {
+      if (!document.hidden) { try { camera.start(true); } catch(e){} } // ← true = rear
+      else { try { camera.pause(); } catch(e){} }
+    });
+
+    arInitialized = true;
+    dbg('AR initialized');
+  } catch (e) {
+    console.error('AR initialization failed:', e);
+    dbg('Initialization failed - check console');
+    throw e;
+  }
+}
 
     async function playVideoWithAudio(videoElement) {
       try {
