@@ -3,10 +3,10 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,user-scalable=no">
-  <title>WebAR — Auto AR Experience</title>
+  <title>WebAR — Intro → Menu → Exercise</title>
 
   <style>
-    :root { --z-ui:5; --z-menu:6; --z-debug:20; --z-countdown:25 }
+    :root { --z-ui:5; --z-menu:6; --z-debug:20 }
     html,body{margin:0;height:100%;overflow:hidden;background:#000;font-family:system-ui,Arial,sans-serif}
     canvas.webgl{position:fixed;inset:0;width:100vw;height:100vh;background:#000}
 
@@ -23,30 +23,9 @@
            padding:8px 12px;border-radius:8px;font:12px/1.4 monospace;white-space:pre-wrap;max-width:90vw;
            border:1px solid rgba(0,255,0,0.3)}
     
-    #loadingScreen{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;z-index:var(--z-ui);
-                   background:#000;flex-direction:column;gap:20px}
-    
-    .loading-spinner{width:50px;height:50px;border:4px solid rgba(255,255,255,0.3);border-top:4px solid #fff;
-                     border-radius:50%;animation:spin 1s linear infinite}
-    
-    @keyframes spin { 0%{transform:rotate(0deg)} 100%{transform:rotate(360deg)} }
-    
-    #permissionError{position:fixed;inset:0;display:none;align-items:center;justify-content:center;z-index:var(--z-ui);
-                     background:#000;flex-direction:column;gap:20px;text-align:center;padding:20px}
-
-    #countdownOverlay{position:fixed;inset:0;display:none;align-items:center;justify-content:center;z-index:var(--z-countdown);
-                      background:rgba(0,0,0,0.8);flex-direction:column;gap:20px}
-    
-    .countdown-number{font-size:120px;color:#fff;font-weight:bold;text-shadow:0 0 20px rgba(255,255,255,0.5);
-                      animation:pulse 1s ease-in-out}
-    
-    @keyframes pulse { 0%{transform:scale(1)} 50%{transform:scale(1.1)} 100%{transform:scale(1)} }
-
-    /* Hide Zappar branding */
-    .zappar-permission-request-overlay,
-    .zappar-permission-denied-ui,
-    .zappar-browser-incompatible-ui,
-    div[style*="zappar"]{display:none !important}
+    #instructions{position:fixed;bottom:20px;left:20px;right:20px;z-index:var(--z-ui);
+                  color:#fff;text-align:center;background:rgba(0,0,0,0.6);
+                  padding:12px;border-radius:12px;font-size:14px;display:none}
   </style>
 
   <!-- THREE + Zappar -->
@@ -74,7 +53,7 @@
   </div>
 
   <!-- Loading Screen -->
-  <div id="loadingScreen" style="display:none">
+  <div id="loadingScreen">
     <div class="loading-spinner"></div>
     <h2 style="color:#fff;margin:0;">Starting AR Experience...</h2>
     <p style="color:#ccc;margin:0;">Please allow camera access when prompted</p>
@@ -103,6 +82,8 @@
     </div>
   </div>
 
+  <div id="instructions">Tap anywhere to place the AR content in your space</div>
+
   <!-- Hidden video elements -->
   <video id="vidIntro" playsinline preload="auto" style="display:none" crossorigin="anonymous"></video>
   <video id="vidExercise" playsinline preload="auto" loop style="display:none" crossorigin="anonymous"></video>
@@ -113,9 +94,6 @@
     const INTRO_MP4_URL      = "";
     const EXERCISE_WEBM_URL  = "https://batbaatar-anu.github.io/my-ar-host/dasgal.webm";
     const EXERCISE_MP4_URL   = "";
-
-    // Optimized AR content position (closer and better positioned)
-    const AR_POSITION = { x: 0, y: 0, z: -1.5 }; // Closer position for better quality
 
     // Debug logger
     const dbg = (message) => {
@@ -133,10 +111,8 @@
     const btnRetry = document.getElementById('btnRetry');
     const btnUnmute = document.getElementById('btnUnmute');
     const menu = document.getElementById('menu');
-    const startLayer = document.getElementById('startLayer');
-    const btnStart = document.getElementById('btnStart');
 
-    // Set video sources with higher quality settings
+    // Set video sources with proper codec support
     function setupVideoSources(videoElement, webmUrl, mp4Url = "") {
       videoElement.innerHTML = "";
       if (webmUrl) {
@@ -151,9 +127,12 @@
         mp4Source.type = 'video/mp4';
         videoElement.appendChild(mp4Source);
       }
+      
+      // Optimize video settings for better quality
       videoElement.setAttribute('webkit-playsinline', 'true');
       videoElement.setAttribute('playsinline', 'true');
       videoElement.preload = 'auto';
+      
       videoElement.load();
     }
 
@@ -163,12 +142,16 @@
         countdownOverlay.style.display = 'flex';
         let count = seconds;
         countdownNumber.textContent = count;
+        
         const countInterval = setInterval(() => {
           count--;
           if (count > 0) {
             countdownNumber.textContent = count;
+            // Trigger animation by removing and re-adding class
             countdownNumber.style.animation = 'none';
-            setTimeout(() => { countdownNumber.style.animation = 'pulse 1s ease-in-out'; }, 10);
+            setTimeout(() => {
+              countdownNumber.style.animation = 'pulse 1s ease-in-out';
+            }, 10);
           } else {
             countdownNumber.textContent = 'GO!';
             setTimeout(() => {
@@ -183,18 +166,29 @@
 
     /********** AR Engine **********/
     let THREE, ZapparThree, renderer, camera, scene, tracker, anchor, plane;
+    let hasPlacedContent = false;
     let introTexture, exerciseTexture, currentVideo;
-    let arInitialized = false;
 
-    // Request camera permissions with custom handling
+    // Request camera permissions
     async function requestCameraAccess() {
       try {
+        // Custom camera permission request
         const stream = await navigator.mediaDevices.getUserMedia({ 
-          video: { facingMode: 'environment', width: { ideal: 1920 }, height: { ideal: 1080 } } 
+          video: { 
+            facingMode: 'environment',
+            width: { ideal: 1920 },
+            height: { ideal: 1080 }
+          } 
         });
+        
+        // Stop the stream as Zappar will handle it
         stream.getTracks().forEach(track => track.stop());
+        
         const permitted = await ZapparThree.permissionRequest();
-        if (!permitted) throw new Error('Zappar permission denied');
+        if (!permitted) {
+          throw new Error('Zappar permission denied');
+        }
+        
         camera?.start();
         dbg('Camera access granted and started');
         return true;
@@ -204,74 +198,125 @@
       }
     }
 
-    // Create high-quality video texture
+    // Create video texture
     function createVideoTexture(videoElement) {
       const texture = new THREE.VideoTexture(videoElement);
       texture.colorSpace = THREE.SRGBColorSpace;
       texture.flipY = false;
+      
+      // Optimize texture settings for better quality
       texture.minFilter = THREE.LinearFilter;
       texture.magFilter = THREE.LinearFilter;
       texture.format = THREE.RGBFormat;
       texture.generateMipmaps = false;
+      
       return texture;
     }
 
-    // Optimize plane positioning for best quality
+    // Fit plane to video aspect ratio and position it upright
     function adjustPlaneToVideo(videoElement) {
       const width = videoElement.videoWidth || 1280;
       const height = videoElement.videoHeight || 720;
-      const displayHeight = 0.8;
+      
+      // Calculate optimal size based on closer position
+      const displayHeight = 0.8; // Slightly smaller but closer for better quality
       const displayWidth = displayHeight * (width / height);
+      
+      // Update geometry with higher resolution
       plane.geometry.dispose();
       plane.geometry = new THREE.PlaneGeometry(displayWidth, displayHeight, 32, 32);
+      
+      // Position at optimized location
       plane.position.set(AR_POSITION.x, AR_POSITION.y, AR_POSITION.z);
       plane.rotation.set(0, 0, 0);
+      
       dbg(`Optimized AR plane: ${displayWidth.toFixed(2)}x${displayHeight}m at ${AR_POSITION.z}m distance`);
     }
 
     // Initialize AR system with quality optimizations
     async function initializeAR() {
       try {
+        // Wait for dependencies
         ({ THREE, ZapparThree } = await window.__depsReady);
-        if (!THREE || !ZapparThree) throw new Error('Failed to load dependencies');
-        if (ZapparThree.browserIncompatible()) throw new Error('Browser not compatible');
+        
+        if (!THREE || !ZapparThree) {
+          throw new Error('Failed to load dependencies');
+        }
 
-        renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false, powerPreference: 'high-performance', precision: 'highp' });
+        if (ZapparThree.browserIncompatible()) {
+          throw new Error('Browser not compatible');
+        }
+
+        // Setup high-quality WebGL renderer
+        renderer = new THREE.WebGLRenderer({ 
+          antialias: true, 
+          alpha: false, 
+          powerPreference: 'high-performance',
+          precision: 'highp'
+        });
+        
         renderer.setSize(window.innerWidth, window.innerHeight);
-        renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+        renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2)); // Limit pixel ratio for performance
         renderer.domElement.classList.add('webgl');
         document.body.appendChild(renderer.domElement);
 
-        window.addEventListener('resize', () => renderer.setSize(window.innerWidth, window.innerHeight));
+        window.addEventListener('resize', () => {
+          renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+
         ZapparThree.glContextSet(renderer.getContext());
 
-        camera = new ZapparThree.Camera({ userFacing: false, rearCameraSource: 'best' });
+        // Setup camera with quality settings
+        camera = new ZapparThree.Camera({ 
+          userFacing: false,
+          rearCameraSource: 'best' // Request best quality rear camera
+        });
         scene = new THREE.Scene();
         scene.background = camera.backgroundTexture;
 
+        // Setup instant world tracking
         tracker = new ZapparThree.InstantWorldTracker();
         anchor = new ZapparThree.InstantWorldAnchorGroup(camera, tracker);
         scene.add(anchor);
 
+        // Create optimized display plane
         plane = new THREE.Mesh(
           new THREE.PlaneGeometry(1, 1, 16, 16),
-          new THREE.MeshBasicMaterial({ transparent: true, side: THREE.DoubleSide, alphaTest: 0.1 })
+          new THREE.MeshBasicMaterial({ 
+            transparent: true, 
+            side: THREE.DoubleSide,
+            alphaTest: 0.1
+          })
         );
         anchor.add(plane);
 
+        // Start render loop
         renderer.setAnimationLoop(() => {
-          tracker.setAnchorPoseFromCameraOffset(AR_POSITION.x, AR_POSITION.y, AR_POSITION.z);
+          if (!hasPlacedContent) {
+            // Before placement, position content 2 meters in front
+            tracker.setAnchorPoseFromCameraOffset(0, 0, -2);
+          }
+          
+          // Keep plane upright and facing camera
+          makePlaneUpright();
+          
+          // Update and render
           camera.updateFrame(renderer);
           renderer.render(scene, camera);
         });
 
+        // Handle app visibility changes
         document.addEventListener('visibilitychange', () => {
-          if (!document.hidden) { try { camera.start(); } catch(e){} }
-          else { try { camera.pause(); } catch(e){} }
+          if (!document.hidden) {
+            try { camera.start(); } catch (e) { console.warn('Camera restart failed:', e); }
+          } else {
+            try { camera.pause(); } catch (e) { console.warn('Camera pause failed:', e); }
+          }
         });
 
         arInitialized = true;
         dbg('High-quality AR system initialized');
+        
       } catch (error) {
         console.error('AR initialization failed:', error);
         dbg('AR initialization failed: ' + error.message);
@@ -279,17 +324,22 @@
       }
     }
 
-    // Enhanced video playback
+    // Play video with audio handling
     async function playVideoWithAudio(videoElement) {
       try {
+        // Ensure video is ready
         if (videoElement.readyState < 2) {
-          await new Promise(r => videoElement.addEventListener('canplay', r, { once:true }));
+          await new Promise(resolve => {
+            videoElement.addEventListener('canplay', resolve, { once: true });
+          });
         }
+        
         videoElement.muted = false;
         await videoElement.play();
         btnUnmute.style.display = 'none';
-        dbg('Video playing with audio at high quality');
+        dbg('Video playing with audio');
       } catch (error) {
+        // Fallback to muted playback
         videoElement.muted = true;
         try {
           await videoElement.play();
@@ -301,62 +351,69 @@
       }
     }
 
-    function showPermissionError() {
-      loadingScreen.style.display = 'none';
-      countdownOverlay.style.display = 'none';
-      permissionError.style.display = 'flex';
-    }
-
-    function hideAllScreens() {
-      loadingScreen.style.display = 'none';
-      permissionError.style.display = 'none';
-      countdownOverlay.style.display = 'none';
-    }
-
-    // Enhanced AR experience startup
-    async function startARExperience() {
+    // Start AR experience
+    btnStart.addEventListener('click', async () => {
       try {
         dbg('Starting enhanced AR experience...');
-        loadingScreen.style.display = 'flex';
-
+        
         await requestCameraAccess();
-
+        
+        // Setup high-quality video sources
         setupVideoSources(vIntro, INTRO_WEBM_URL, INTRO_MP4_URL);
         setupVideoSources(vExercise, EXERCISE_WEBM_URL, EXERCISE_MP4_URL);
 
+        // Create textures
         introTexture = introTexture || createVideoTexture(vIntro);
         exerciseTexture = exerciseTexture || createVideoTexture(vExercise);
 
+        // Start with intro video
         currentVideo = vIntro;
         plane.material.map = introTexture;
+        hasPlacedContent = false;
 
-        if (vIntro.readyState >= 1) adjustPlaneToVideo(vIntro);
-        else vIntro.addEventListener('loadedmetadata', () => adjustPlaneToVideo(vIntro), { once: true });
+        if (vIntro.readyState >= 1) {
+          adjustPlaneToVideo(vIntro);
+        } else {
+          vIntro.addEventListener('loadedmetadata', () => adjustPlaneToVideo(vIntro), { once: true });
+        }
 
+        // Show countdown before starting
         hideAllScreens();
         await showCountdown(3);
         
         await playVideoWithAudio(vIntro);
-        dbg('High-quality intro video playing in AR');
 
+        // Setup placement handler
+        const handlePlacement = () => {
+          hasPlacedContent = true;
+          instructions.style.display = 'none';
+          window.removeEventListener('pointerdown', handlePlacement);
+          dbg('AR content placed in space');
+        };
+        
+        window.addEventListener('pointerdown', handlePlacement, { once: true, passive: true });
+
+        // Show instructions and hide start screen
+        instructions.style.display = 'block';
+        startLayer.style.display = 'none';
+        
+        dbg('Intro video ready - tap to place in AR space');
+
+        // Handle intro video end
         vIntro.onended = () => {
           menu.style.display = 'flex';
+          instructions.style.display = 'none';
           dbg('Intro completed - showing menu');
         };
 
       } catch (error) {
         console.error('Failed to start AR experience:', error);
         dbg('Failed to start: ' + error.message);
-        showPermissionError();
+        alert('Failed to start AR experience. Please ensure you have granted camera permissions and are using a supported browser.');
       }
-    }
-
-    btnRetry.addEventListener('click', async () => {
-      permissionError.style.display = 'none';
-      loadingScreen.style.display = 'flex';
-      await startARExperience();
     });
 
+    // Enable audio button
     btnUnmute.addEventListener('click', async () => {
       if (currentVideo) {
         try {
@@ -370,67 +427,83 @@
       }
     });
 
+    // Exercise with permission re-request
     document.getElementById('btnExercise').addEventListener('click', async () => {
       try {
         menu.style.display = 'none';
         dbg('Starting exercise with fresh permission...');
-        try { await requestCameraAccess(); } catch (e) { dbg('Camera permission needed for exercise'); showPermissionError(); return; }
+
+        // Re-request camera permission for exercise
+        try {
+          await requestCameraAccess();
+        } catch (e) {
+          dbg('Camera permission needed for exercise');
+          showPermissionError();
+          return;
+        }
+
         if (currentVideo) currentVideo.pause();
 
         currentVideo = vExercise;
         plane.material.map = exerciseTexture;
+        hasPlacedContent = false;
 
-        if (vExercise.readyState >= 1) adjustPlaneToVideo(vExercise);
-        else vExercise.addEventListener('loadedmetadata', () => adjustPlaneToVideo(vExercise), { once: true });
+        if (vExercise.readyState >= 1) {
+          adjustPlaneToVideo(vExercise);
+        } else {
+          vExercise.addEventListener('loadedmetadata', () => adjustPlaneToVideo(vExercise), { once: true });
+        }
 
+        // Show countdown before exercise
         await showCountdown(3);
+        
         vExercise.currentTime = 0;
         await playVideoWithAudio(vExercise);
+        
         dbg('Exercise playing in high-quality AR');
+
       } catch (error) {
         console.error('Failed to start exercise:', error);
         dbg('Failed to start exercise: ' + error.message);
       }
     });
 
+    // Restart intro button
     document.getElementById('btnRestart').addEventListener('click', async () => {
       try {
         menu.style.display = 'none';
         dbg('Restarting intro...');
+
         if (currentVideo) currentVideo.pause();
 
+        // Switch back to intro
         currentVideo = vIntro;
         plane.material.map = introTexture;
 
         await showCountdown(2);
+        
         vIntro.currentTime = 0;
         await playVideoWithAudio(vIntro);
+
         dbg('Intro restarted in high quality');
+
       } catch (error) {
         console.error('Failed to restart intro:', error);
         dbg('Failed to restart: ' + error.message);
       }
     });
 
-    /* START button handler — launches AR on demand */
-    btnStart.addEventListener('click', async () => {
+    // Initialize everything
+    window.addEventListener('load', async () => {
       try {
-        dbg('Start button clicked');
-        startLayer.style.display = 'none';
-        if (!arInitialized) await initializeAR();
+        await initializeAR();
         await startARExperience();
-      } catch (e) {
-        dbg('Start failed: ' + e.message);
+      } catch (error) {
+        console.error('Failed to initialize:', error);
+        dbg('Initialization failed - check console');
         showPermissionError();
       }
     });
-
-    /* NOTE: авто-эхлүүлэхийг болиулсан — зөвхөн START дээр дарж эхэлнэ
-    window.addEventListener('load', async () => {
-      try { await initializeAR(); await startARExperience(); }
-      catch (error) { console.error('Failed to initialize:', error); dbg('Initialization failed - check console'); showPermissionError(); }
-    });
-    */
 
     // Hide Zappar branding with additional methods
     setTimeout(() => {
